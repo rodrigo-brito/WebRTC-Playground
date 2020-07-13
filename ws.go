@@ -5,18 +5,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"sync"
-
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/pion/rtcp"
+	"github.com/pion/webrtc/v2"
 	"github.com/pion/webrtc/v2/pkg/media/ivfwriter"
 	"github.com/pion/webrtc/v2/pkg/media/opuswriter"
-
-	// "github.com/pion/webrtc"
-	"github.com/pion/webrtc/v2"
+	log "github.com/sirupsen/logrus"
 )
 
 // Peer config
@@ -30,18 +26,8 @@ var peerConnectionConfig = webrtc.Configuration{
 }
 
 var (
-	// Media engine
-	m webrtc.MediaEngine
-
-	// API object
-	api *webrtc.API
-
 	// Publisher Peer
 	pcPub *webrtc.PeerConnection
-
-	// Local track
-	videoTrackLock = sync.RWMutex{}
-	audioTrackLock = sync.RWMutex{}
 
 	// Websocket upgrader
 	upgrader = websocket.Upgrader{}
@@ -59,6 +45,11 @@ type wsMsg struct {
 	Name string
 }
 
+type wsError struct {
+	Type    string
+	Message string
+}
+
 type avTrack struct {
 	Video *webrtc.Track
 	Audio *webrtc.Track
@@ -71,23 +62,79 @@ func getRcvMedia(name string, media map[string]avTrack) avTrack {
 	return avTrack{}
 }
 
-func ws(w http.ResponseWriter, r *http.Request) {
+type SFU struct {
+	// Media engine
+	m webrtc.MediaEngine
+
+	// API object
+	api *webrtc.API
+}
+
+func NewSFU() SFU {
+	var sfu SFU
+	// Create a MediaEngine object to configure the supported codec
+	sfu.m = webrtc.MediaEngine{}
+
+	settingEngine := webrtc.SettingEngine{}
+	settingEngine.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
+
+	// Setup the codecs you want to use.
+	sfu.m.RegisterDefaultCodecs()
+
+	// Create the API object with the MediaEngine
+	sfu.api = webrtc.NewAPI(
+		webrtc.WithMediaEngine(sfu.m),
+		webrtc.WithSettingEngine(settingEngine),
+	)
+
+	return sfu
+}
+
+func ResponseWSError(conn *websocket.Conn, id int, err error) {
+	errMessage := wsError{
+		Type:    "error",
+		Message: err.Error(),
+	}
+
+	byteToClient, err := json.Marshal(errMessage)
+	if err != nil {
+		log.Error(err)
+		return
+	}
+
+	if err := conn.WriteMessage(id, byteToClient); err != nil {
+		log.Error(err)
+	}
+}
+
+func (s *SFU) ws(w http.ResponseWriter, r *http.Request) {
 	// Websocket client
 	c, err := upgrader.Upgrade(w, r, nil)
-	checkError(err)
+	if err != nil {
+		log.Error(err)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
 
 	defer func() {
-		checkError(c.Close())
+		err := c.Close()
+		if err != nil {
+			log.Error(err)
+		}
 	}()
 
 	for {
 		// Read sdp from websocket
 		mt, msg, err := c.ReadMessage()
-		checkError(err)
+		if err != nil {
+			log.Error(err)
+			continue
+		}
 
 		wsData := wsMsg{}
 		if err := json.Unmarshal(msg, &wsData); err != nil {
-			checkError(err)
+			log.Error(err)
+			continue
 		}
 
 		sdp := wsData.Sdp
@@ -101,26 +148,34 @@ func ws(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if wsData.Type == "publish" {
-
-			// receive chrome publish sdp
-
 			// Create a new RTCPeerConnection
-			pcPub, err = api.NewPeerConnection(peerConnectionConfig)
-			checkError(err)
+			pcPub, err = s.api.NewPeerConnection(peerConnectionConfig)
+			if err != nil {
+				log.Error(err)
+				continue
+			}
 
 			_, err = pcPub.AddTransceiver(webrtc.RTPCodecTypeAudio)
-			checkError(err)
+			if err != nil {
+				ResponseWSError(c, mt, err)
+				return
+			}
 
 			_, err = pcPub.AddTransceiver(webrtc.RTPCodecTypeVideo)
-			checkError(err)
+			if err != nil {
+				ResponseWSError(c, mt, err)
+				return
+			}
 
 			opusFile, err := opuswriter.New(fmt.Sprintf("%s.ogg", name), 48000, 2)
 			if err != nil {
-				panic(err)
+				ResponseWSError(c, mt, err)
+				return
 			}
 			ivfFile, err := ivfwriter.New(fmt.Sprintf("%s.ivf", name))
 			if err != nil {
-				panic(err)
+				ResponseWSError(c, mt, err)
+				return
 			}
 
 			// Set the handler for ICE connection state
@@ -143,7 +198,6 @@ func ws(w http.ResponseWriter, r *http.Request) {
 					}
 
 					fmt.Println("Disconnected!")
-					os.Exit(0)
 				}
 			})
 
@@ -153,7 +207,9 @@ func ws(w http.ResponseWriter, r *http.Request) {
 					ticker := time.NewTicker(rtcpPLIInterval)
 					for range ticker.C {
 						if rtcpSendErr := pcPub.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: remoteTrack.SSRC()}}); rtcpSendErr != nil {
-							checkError(rtcpSendErr)
+							if err != nil {
+								log.Error(err)
+							}
 						}
 					}
 				}()
@@ -162,19 +218,33 @@ func ws(w http.ResponseWriter, r *http.Request) {
 					// Create a local video track, all our SFU clients will be fed via this track
 					var err error
 					track, err := pcPub.NewTrack(remoteTrack.PayloadType(), remoteTrack.SSRC(), "video", "pion")
-					checkError(err)
+					if err != nil {
+						log.Error(err)
+						return
+					}
 
 					m.Video = track
 					mediaInfo[name] = m
 
 					defer func() {
-						checkError(ivfFile.Close())
-						checkError(opusFile.Close())
+						err := ivfFile.Close()
+						if err != nil {
+							log.Error(err)
+						}
+
+						err = opusFile.Close()
+						if err != nil {
+							log.Error(err)
+						}
 					}()
 
 					for {
 						pkt, err := remoteTrack.ReadRTP()
-						checkError(err)
+						if err != nil {
+							log.Error(err)
+							return
+						}
+
 						err = track.WriteRTP(pkt)
 
 						codec := remoteTrack.Codec()
@@ -182,18 +252,21 @@ func ws(w http.ResponseWriter, r *http.Request) {
 							fmt.Println("Got Opus track, saving to disk as output.opus (48 kHz, 2 channels)")
 							err := opusFile.WriteRTP(pkt)
 							if err != nil {
-								checkError(err)
+								log.Error(err)
+								return
 							}
 						} else if codec.Name == webrtc.VP8 {
 							fmt.Println("Got VP8 track, saving to disk as output.ivf")
 							err := ivfFile.WriteRTP(pkt)
 							if err != nil {
-								checkError(err)
+								log.Error(err)
+								return
 							}
 						}
 
 						if err != io.ErrClosedPipe {
-							checkError(err)
+							log.Error(err)
+							return
 						}
 					}
 
@@ -201,7 +274,10 @@ func ws(w http.ResponseWriter, r *http.Request) {
 					// Create a local audio track, all our SFU clients will be fed via this track
 					var err error
 					audioTrack, err := pcPub.NewTrack(remoteTrack.PayloadType(), remoteTrack.SSRC(), "audio", "pion")
-					checkError(err)
+					if err != nil {
+						ResponseWSError(c, mt, err)
+						return
+					}
 
 					m.Audio = audioTrack
 					if _, ok := mediaInfo[name]; !ok {
@@ -209,35 +285,57 @@ func ws(w http.ResponseWriter, r *http.Request) {
 					}
 
 					defer func() {
-						checkError(opusFile.Close())
+						err := opusFile.Close()
+						if err != nil {
+							log.Error(err)
+						}
 					}()
 					for {
 						pkt, err := remoteTrack.ReadRTP()
-						checkError(err)
+						if err != nil {
+							ResponseWSError(c, mt, err)
+							return
+						}
+
 						err = audioTrack.WriteRTP(pkt)
 						if err != io.ErrClosedPipe {
-							checkError(err)
+							log.Error(err)
+							return
 						}
 
 						err = opusFile.WriteRTP(pkt)
-						checkError(err)
+						if err != nil {
+							log.Error(err)
+							return
+						}
 					}
 				}
 			})
 
 			// Set the remote SessionDescription
-			checkError(pcPub.SetRemoteDescription(
+			err = pcPub.SetRemoteDescription(
 				webrtc.SessionDescription{
 					SDP:  sdp,
 					Type: webrtc.SDPTypeOffer,
-				}))
+				})
+			if err != nil {
+				ResponseWSError(c, mt, err)
+				return
+			}
 
 			// Create answer
 			answer, err := pcPub.CreateAnswer(nil)
-			checkError(err)
+			if err != nil {
+				ResponseWSError(c, mt, err)
+				return
+			}
 
 			// Sets the LocalDescription, and starts our UDP listeners
-			checkError(pcPub.SetLocalDescription(answer))
+			err = pcPub.SetLocalDescription(answer)
+			if err != nil {
+				ResponseWSError(c, mt, err)
+				return
+			}
 
 			// Send server sdp to publisher
 			dataToClient := wsMsg{
@@ -247,40 +345,62 @@ func ws(w http.ResponseWriter, r *http.Request) {
 			}
 
 			byteToClient, err := json.Marshal(dataToClient)
-			checkError(err)
-
-			if err := c.WriteMessage(mt, byteToClient); err != nil {
-				checkError(err)
+			if err != nil {
+				ResponseWSError(c, mt, err)
+				return
 			}
 
+			if err := c.WriteMessage(mt, byteToClient); err != nil {
+				log.Error(err)
+			}
 		}
 
 		if wsData.Type == "subscribe" {
 			m = getRcvMedia(name, mediaInfo)
 
-			pcSub, err := api.NewPeerConnection(peerConnectionConfig)
-			checkError(err)
+			pcSub, err := s.api.NewPeerConnection(peerConnectionConfig)
+			if err != nil {
+				ResponseWSError(c, mt, err)
+				return
+			}
 
 			if m.Video != nil {
 				_, err = pcSub.AddTrack(m.Video)
-				checkError(err)
+				if err != nil {
+					ResponseWSError(c, mt, err)
+					return
+				}
 			}
 			if m.Audio != nil {
 				_, err = pcSub.AddTrack(m.Audio)
-				checkError(err)
+				if err != nil {
+					ResponseWSError(c, mt, err)
+					return
+				}
 			}
 
-			checkError(pcSub.SetRemoteDescription(
+			err = pcSub.SetRemoteDescription(
 				webrtc.SessionDescription{
 					SDP:  string(sdp),
 					Type: webrtc.SDPTypeOffer,
-				}))
+				})
+			if err != nil {
+				ResponseWSError(c, mt, err)
+				return
+			}
 
 			answer, err := pcSub.CreateAnswer(nil)
-			checkError(err)
+			if err != nil {
+				ResponseWSError(c, mt, err)
+				return
+			}
 
 			// Sets the LocalDescription, and starts our UDP listeners
-			checkError(pcSub.SetLocalDescription(answer))
+			err = pcSub.SetLocalDescription(answer)
+			if err != nil {
+				ResponseWSError(c, mt, err)
+				return
+			}
 
 			// Send sdp
 			dataToClient := wsMsg{
@@ -289,10 +409,13 @@ func ws(w http.ResponseWriter, r *http.Request) {
 				Name: name,
 			}
 			byteToClient, err := json.Marshal(dataToClient)
-			checkError(err)
+			if err != nil {
+				ResponseWSError(c, mt, err)
+				return
+			}
 
 			if err := c.WriteMessage(mt, byteToClient); err != nil {
-				checkError(err)
+				log.Error(err)
 			}
 		}
 	}
