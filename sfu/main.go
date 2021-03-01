@@ -1,9 +1,13 @@
 package main
 
 import (
+	"embed"
 	"fmt"
 	"net/http"
 )
+
+// go:embed static/*
+var static embed.FS
 
 func main() {
 	sfu := NewSFU()
@@ -12,7 +16,7 @@ func main() {
 	http.HandleFunc("/ws", sfu.ws)
 
 	// web handle func
-	http.Handle("/", http.FileServer(http.Dir("./static")))
+	http.Handle("/*", http.FileServer(http.FS(static)))
 
 	// Support https, so we can test by lan
 	fmt.Printf("Listening on https://localhost:%d\n", Port())

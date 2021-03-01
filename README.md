@@ -1,14 +1,11 @@
-# WebRTC - Demo with Recorder
+### WebRTC - Examples
 
-SFU video chat with recorder (Save to Disk)
-Based on [11LiveCaht](https://github.com/pion/11LiveChat)
+### SFU with Recording
 
+- Copy `sfu/.env_sample` to `sfu/.env` - TLS Settings
+- `go run sfu/*.go`
 
-# How to Run
+### Signaling - P2P
 
-- Mkcert to generate TLS keys
-- Copy `.env_sample` to `.env`, and change TLS settings
-- `go run *.go` - Initialize
-
-- Bob page: https://localhost:8000/bob.html
-- Alice page: https://localhost:8000/alice.html
+- Copy `p2p/.env_sample` to `p2p/.env` - TLS Settings
+- `go run p2p/*.go`

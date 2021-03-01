@@ -1,22 +1,23 @@
 package main
 
 import (
-	"os/exec"
+	_ "embed"
+	"log"
+	"strings"
 
 	"github.com/spf13/viper"
-	"github.com/tidwall/gjson"
 )
 
-var rootDir = "."
+//go:embed .env
+var configFile string
 
 func init() {
-	if b, err := exec.Command("go", "list", "-json", "-m").Output(); err == nil {
-		rootDir = gjson.ParseBytes(b).Get("Dir").String() + "/"
-	}
-
 	viper.SetConfigName(".env")
 	viper.SetConfigType("env")
-	viper.AddConfigPath(rootDir)
+	err := viper.ReadConfig(strings.NewReader(configFile))
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	viper.AutomaticEnv()
 	if err := viper.ReadInConfig(); err != nil {

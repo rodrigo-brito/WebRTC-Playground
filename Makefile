@@ -7,3 +7,8 @@ endif
 
 run: dev-dependencies
 	@wtc
+sfu: dev-dependencies
+	@wtc sfu
+
+p2p: dev-dependencies
+	@wtc p2p

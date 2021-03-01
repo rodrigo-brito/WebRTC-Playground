@@ -1,0 +1,3 @@
+# ignore pem files
+/*.pem
+.env

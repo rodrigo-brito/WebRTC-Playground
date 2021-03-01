@@ -1,14 +1,16 @@
 no_trace: false
 debounce: 300
 ignore: \.git/
-trig: [run]
+trig_async: [sfu, p2p]
 
 rules:
-  - name: run
+  - name: sfu
     match: \.(go|yaml)$
     ignore: _test\.go$
-    command: go run *.go
+    command: go run sfu/*.go
 
-  - name: test
-    match: _test\.go$
-    command: go test -cover {PKG}
+  - name: p2p
+    match: \.(go|yaml)$
+    ignore: _test\.go$
+    command: go run p2p/*.go
+
