@@ -27,6 +27,6 @@ func main() {
 	http.Handle("/", http.FileServer(http.FS(staticDir)))
 
 	// Support https, so we can test by lan
-	fmt.Printf("Listening on https://localhost:%d\n", Port())
+	fmt.Printf("Listening SFU on https://localhost:%d\n", Port())
 	panic(http.ListenAndServeTLS(fmt.Sprintf(":%d", Port()), TLSCert(), TLSKey(), nil))
 }

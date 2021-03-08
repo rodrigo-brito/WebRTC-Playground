@@ -22,7 +22,7 @@ func main() {
 	http.Handle("/", http.FileServer(http.FS(staticDir)))
 
 	// Support https, so we can test by lan
-	fmt.Printf("Listening on https://localhost:%d\n", Port())
+	fmt.Printf("Listening P2P on https://localhost:%d\n", Port())
 	err = http.ListenAndServeTLS(fmt.Sprintf(":%d", Port()), TLSCert(), TLSKey(), nil)
 	if err != nil {
 		log.Fatal(err)
