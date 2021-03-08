@@ -5,12 +5,12 @@ trig_async: [sfu, p2p]
 
 rules:
   - name: sfu
-    match: \.(go|yaml)$
+    match: sfu/.*\.(go|yaml|html|env|js)$
     ignore: _test\.go$
     command: go run sfu/*.go
 
   - name: p2p
-    match: \.(go|yaml)$
+    match: p2p/.*\.(go|yaml|html|env|js)$
     ignore: _test\.go$
     command: go run p2p/*.go
 
