@@ -14,10 +14,11 @@ import (
 type CommandType string
 
 const (
-	Offer      CommandType = "offer"
-	Answer     CommandType = "answer"
-	Connect    CommandType = "connect"
-	Disconnect CommandType = "disconnect"
+	Offer        CommandType = "offer"
+	Answer       CommandType = "answer"
+	IceCandidate CommandType = "icecandidate"
+	Connect      CommandType = "connect"
+	Disconnect   CommandType = "disconnect"
 )
 
 type Payload struct {
@@ -54,6 +55,7 @@ func (s *Server) writerWS(conn net.Conn, code ws.OpCode, payload Payload) error 
 }
 
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
 	conn, _, _, err := ws.UpgradeHTTP(r, w)
 	if err != nil {
 		log.Error(err)
@@ -62,7 +64,23 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
-		defer conn.Close()
+		defer func() {
+			conn.Close()
+			delete(s.users, id)
+
+			log.Info("disconnecting: ", id)
+			// notify all users a peer disconnection
+			for to, conn := range s.users {
+				err = s.writerWS(conn, ws.OpText, Payload{
+					To:      to,
+					From:    id,
+					Command: Disconnect,
+				})
+				if err != nil {
+					log.Errorf("write disconnect: %s", err)
+				}
+			}
+		}()
 
 		for {
 			data, op, err := wsutil.ReadClientData(conn)
@@ -85,22 +103,15 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			}
 
 			switch payload.Command {
-			case Offer:
-				log.Infof("offer %s -> %s", payload.From, payload.To)
-				err = s.writerWS(conn, op, payload)
-				if err != nil {
-					log.Errorf("write connect: %s", err)
-				}
-
-			case Answer:
-				log.Infof("answer %s -> %s", payload.From, payload.To)
-				err = s.writerWS(conn, op, payload)
+			case Offer, Answer, IceCandidate:
+				log.Infof("%s %s -> %s", payload.Command, payload.From, payload.To)
+				err = s.writerWS(s.users[payload.To], op, payload)
 				if err != nil {
 					log.Errorf("write connect: %s", err)
 				}
 
 			case Connect:
-				s.users[payload.From] = conn
+				s.users[id] = conn
 				log.Info("connecting: ", payload.From)
 				// notify all users a new connection
 				for id, conn := range s.users {
@@ -119,23 +130,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 				}
 
 			case Disconnect:
-				delete(s.users, payload.From)
-				log.Info("disconnecting: ", payload.From)
-				// notify all users a peer disconnection
-				for id, conn := range s.users {
-					if id == payload.From {
-						continue
-					}
-
-					err = s.writerWS(conn, op, Payload{
-						To:      id,
-						From:    payload.From,
-						Command: Disconnect,
-					})
-					if err != nil {
-						log.Errorf("write disconnect: %s", err)
-					}
-				}
+				break
 			}
 		}
 	}()
