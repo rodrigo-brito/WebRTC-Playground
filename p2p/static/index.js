@@ -150,6 +150,7 @@ function onTrack(localPeerConnection, id) {
             
             video.id = stream.id;
             video.srcObject = stream;
+            video.muted = false;
             wrapper.setAttribute("data-user", id)
             wrapper.querySelector(".label").innerText = id;
             document.querySelector(".videos").append(wrapper);
