@@ -23,8 +23,14 @@ func main() {
 
 	// Support https, so we can test by lan
 	fmt.Printf("Listening P2P on https://localhost:%d\n", Port())
-	err = http.ListenAndServeTLS(fmt.Sprintf(":%d", Port()), TLSCert(), TLSKey(), nil)
+	if TLSCert() != "" && TLSKey() != "" {
+		err = http.ListenAndServeTLS(fmt.Sprintf(":%d", Port()), TLSCert(), TLSKey(), nil)
+	} else {
+		err = http.ListenAndServe(fmt.Sprintf(":%d", Port()), nil)
+	}
+
 	if err != nil {
 		log.Fatal(err)
 	}
+
 }

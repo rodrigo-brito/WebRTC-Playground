@@ -27,8 +27,6 @@ func init() {
 	}
 
 	viper.SetDefault("port", 9000)
-	viper.SetDefault("tls_key", "key.pem")
-	viper.SetDefault("tls_cert", "cert.pem")
 }
 
 func TLSKey() string {

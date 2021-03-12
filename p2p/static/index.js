@@ -4,17 +4,21 @@ const offerOptions = {
 };
 
 document.addEventListener("DOMContentLoaded", function(event) {
-    const inputID = document.querySelector(".input");
-    const id = String(+new Date());
+    const connections = {};
+    let id = new URLSearchParams(window.location.search).get('id');
+    const connect = document.getElementById("connect");
+    const input = document.getElementById("id");
 
-    start().then(localPeerConnection => {
+    if (!id) {
+        id = String(+new Date());
+    }
+
+    input.setAttribute("value", id);
+
+    start(id).then(localStream => {
         const socket = new WebSocket(`wss://${document.location.host}/ws?id=${id}`);
         socket.onopen = function(e) {
             console.log("[websocket] Connection established");
-            socket.send(JSON.stringify({
-                "from": id,
-                "command": "connect"
-            }));
         };
 
         socket.onmessage = function(event) {
@@ -22,19 +26,28 @@ document.addEventListener("DOMContentLoaded", function(event) {
             console.log(`[websocket] Data received from server: `, payload.command);
             switch (payload.command) {
                 case "connect":
-                    createOffer(socket, localPeerConnection, payload);
+                    const peerConnectionOffer = createPeerConnection(connections, localStream, payload.from)
+                    createOffer(socket, peerConnectionOffer, payload);
                     break;
                 case "offer":
-                    createAnswer(socket, localPeerConnection, payload);
+                    const peerConnectionAnswer = createPeerConnection(connections, localStream, payload.from)
+                    createAnswer(socket, peerConnectionAnswer, payload);
                     break;
                 case "answer":
-                    localPeerConnection.setRemoteDescription(new RTCSessionDescription(JSON.parse(payload.data)))
+                    if (connections[payload.from]){
+                        connections[payload.from].setRemoteDescription(new RTCSessionDescription(JSON.parse(payload.data)))
+                    }
                     break;
                 case "icecandidate":
-                    const candidate = new RTCIceCandidate(JSON.parse(payload.data));
-                    localPeerConnection.addIceCandidate(candidate);
+                    if (connections[payload.from]){
+                        const candidate = new RTCIceCandidate(JSON.parse(payload.data));
+                        connections[payload.from].addIceCandidate(candidate);
+                    }
                     break;
                 case "disconnect":
+                    if (connections[payload.from]){
+                        connections[payload.from] = undefined;
+                    }
                     const video = document.querySelector(`[data-user="${payload.from}"]`)
                     if (video) {
                         video.remove();
@@ -57,7 +70,17 @@ document.addEventListener("DOMContentLoaded", function(event) {
             console.error(`[websocket/error] ${error.message}`);
         };
 
-        console.log("Peer connection created!")
+        connect.removeAttribute("disabled");
+        input.removeAttribute("disabled");
+        connect.addEventListener("click", () => {
+            socket.send(JSON.stringify({
+                "from": id,
+                "command": "connect",
+            }));
+            connect.setAttribute("disabled", "disabled");
+            input.setAttribute("disabled", "disabled");
+            connect.innerText = "Conectado!";
+        })
     });
 });
 
@@ -86,15 +109,22 @@ function onIceStateChange(pc, event) {
     }
 }
 
-async function start() {
+async function start(id) {
     const localVideo = document.getElementById('localVideo');
+    const labelVideo = document.getElementById('label');
+    const input = document.getElementById('id');
+    localVideo.setAttribute("data-user", id);
+    labelVideo.innerText = id;
+
+    input.addEventListener('keyup', (e) => {
+        labelVideo.innerText = input.value;
+    })
 
     const stream = await navigator.mediaDevices.getUserMedia({audio: true, video: true});
     localVideo.srcObject = stream;
-    const localStream = stream;
 
-    const videoTracks = localStream.getVideoTracks();
-    const audioTracks = localStream.getAudioTracks();
+    const videoTracks = stream.getVideoTracks();
+    const audioTracks = stream.getAudioTracks();
 
     if (videoTracks.length > 0) {
         console.log(`Using video device: ${videoTracks[0].label}`);
@@ -103,14 +133,7 @@ async function start() {
         console.log(`Using audio device: ${audioTracks[0].label}`);
     }
 
-    const localPeerConnection = new RTCPeerConnection({iceServers: [{urls: 'stun:stun.l.google.com:19302'}]});
-    localPeerConnection.addEventListener('iceconnectionstatechange', e => onIceStateChange(localPeerConnection, e));
-
-    localStream
-        .getTracks()
-        .forEach(track => localPeerConnection.addTrack(track, localStream));
-
-    return localPeerConnection;
+    return stream
 }
 
 function onTrack(localPeerConnection, id) {
@@ -122,26 +145,39 @@ function onTrack(localPeerConnection, id) {
                 return
             }
 
-            const video = document.createElement("video");
-            video.setAttribute("data-user", id)
+            const wrapper = document.querySelector(".video-wrapper").cloneNode(true);
+            const video = wrapper.querySelector("video");
+            
             video.id = stream.id;
-            video.autoplay = true
-            video.playsInline = true;
-            video.controls = true;
-            video.classList.add("column");
             video.srcObject = stream;
-            document.querySelector(".videos").append(video);
+            wrapper.setAttribute("data-user", id)
+            wrapper.querySelector(".label").innerText = id;
+            document.querySelector(".videos").append(wrapper);
         };
     };
+}
+
+function createPeerConnection(connections, stream, to) {
+    const localPeerConnection = new RTCPeerConnection({
+        iceServers: [
+            {urls: 'stun:stun.l.google.com:19302'}
+        ]
+    });
+
+    localPeerConnection.addEventListener('iceconnectionstatechange', e => onIceStateChange(localPeerConnection, e));
+    stream.getTracks().forEach(track => localPeerConnection.addTrack(track, stream));
+
+    connections[to] = localPeerConnection
+
+    return localPeerConnection;
 }
 
 function createOffer(socket, localPeerConnection, payload) {
     console.log("Creating offer to ", payload.from)
     localPeerConnection.onicecandidate = onIceCandidate(socket, payload.to, payload.from);
+    onTrack(localPeerConnection, payload.from);
     localPeerConnection.createOffer(offerOptions).then(offer => {
         return localPeerConnection.setLocalDescription(offer);
-    }).then(() => {
-        return onTrack(localPeerConnection, payload.from);
     }).then(() => {
         socket.send(JSON.stringify({
             "from": payload.to,

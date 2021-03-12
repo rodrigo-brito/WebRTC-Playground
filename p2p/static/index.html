@@ -8,19 +8,46 @@
     <title>Document</title>
     <script src="index.js" type="application/javascript"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.1/css/bulma.min.css">
+    <style>
+        .video-wrapper {
+            position: relative;
+        }
+
+        .video-wrapper .label {
+            position: absolute;
+            left: 50px;
+            top: 50px;
+            background: #000;
+            color: #fff;
+            padding: 10px;
+            border-radius: 5px;
+        }
+
+        .video-wrapper video {
+            width: 100%;
+        }
+    </style>
 </head>
 <body>
 <section class="section">
     <div class="container">
-        <h1 class="title">
-            Web RTC - P2P
-        </h1>
-        <p class="subtitle">
-            A Simple example with video stream.
-        </p>
-        <div class="content">
-            <div class="videos columns">
-                <video class="column" id="localVideo" playsinline autoplay controls></video>
+        <div class="field">
+            <label class="label" for="id">Username</label>
+            <div class="field has-addons">
+                <div class="control">
+                    <input id="id" name="id" class="input" disabled type="text" placeholder="Your username. eg.: fulano">
+                </div>
+                <div class="control">
+                    <button id="connect" disabled class="button is-primary">
+                        Connect
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div class="videos columns mt-3">
+            <div class="video-wrapper column is-6">
+                <div id="label" class="label"></div>
+                <video id="localVideo" playsinline autoplay controls></video>
             </div>
         </div>
     </div>
