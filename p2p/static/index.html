@@ -42,12 +42,18 @@
                         Connect
                     </button>
                 </div>
+                <div class="control">
+                    <button id="share" disabled class="button is-warning">
+                        Share Screen
+                    </button>
+                </div>
             </div>
+
         </div>
         <div class="videos columns mt-3 is-multiline">
             <div class="video-wrapper column is-half">
                 <div id="label" class="label"></div>
-                <video id="localVideo" playsinline autoplay controls muted></video>
+                <video id="localVideo" data-source="camera" playsinline autoplay controls muted></video>
             </div>
         </div>
     </div>

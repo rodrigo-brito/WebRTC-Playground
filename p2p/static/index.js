@@ -1,3 +1,4 @@
+let userStream;
 const offerOptions = {
     offerToReceiveAudio: 1,
     offerToReceiveVideo: 1
@@ -6,83 +7,166 @@ const offerOptions = {
 document.addEventListener("DOMContentLoaded", function(event) {
     const connections = {};
     let id = new URLSearchParams(window.location.search).get('id');
-    const connect = document.getElementById("connect");
-    const input = document.getElementById("id");
+    const localVideo = document.getElementById('localVideo');
+    const labelVideo = document.getElementById('label');
+    const btnConnect = document.getElementById("connect");
+    const inputID = document.getElementById("id");
+    const share = document.getElementById("share");
 
     if (!id) {
         id = String(+new Date());
     }
 
-    input.setAttribute("value", id);
+    inputID.setAttribute("value", id);
+    labelVideo.innerText = id;
+    inputID.addEventListener('keyup', (e) => {
+        localVideo.setAttribute("data-user", inputID.value);
+        labelVideo.innerText = inputID.value;
+    })
 
-    start(id).then(localStream => {
-        const socket = new WebSocket(`wss://${document.location.host}/ws?id=${id}`);
-        socket.onopen = function(e) {
-            console.log("[websocket] Connection established");
-        };
-
-        socket.onmessage = function(event) {
-            const payload = JSON.parse(event.data);
-            console.log(`[websocket] Data received from server: `, payload.command);
-            switch (payload.command) {
-                case "connect":
-                    const peerConnectionOffer = createPeerConnection(connections, localStream, payload.from)
-                    createOffer(socket, peerConnectionOffer, payload);
-                    break;
-                case "offer":
-                    const peerConnectionAnswer = createPeerConnection(connections, localStream, payload.from)
-                    createAnswer(socket, peerConnectionAnswer, payload);
-                    break;
-                case "answer":
-                    if (connections[payload.from]){
-                        connections[payload.from].setRemoteDescription(new RTCSessionDescription(JSON.parse(payload.data)))
-                    }
-                    break;
-                case "icecandidate":
-                    if (connections[payload.from]){
-                        const candidate = new RTCIceCandidate(JSON.parse(payload.data));
-                        connections[payload.from].addIceCandidate(candidate);
-                    }
-                    break;
-                case "disconnect":
-                    if (connections[payload.from]){
-                        connections[payload.from] = undefined;
-                    }
-                    const video = document.querySelector(`[data-user="${payload.from}"]`)
-                    if (video) {
-                        video.remove();
-                    }
-                    break;
+    initUserMedia(localVideo).then(stream => {
+        userStream = stream;
+        btnConnect.removeAttribute("disabled");
+        inputID.removeAttribute("disabled");
+        btnConnect.addEventListener("click", () => {
+            if (btnConnect.getAttribute("disabled")) {
+                return;
             }
-        };
 
-        socket.onclose = function(event) {
-            if (event.wasClean) {
-                console.log(`[websocket] Connection closed cleanly, code=${event.code} reason=${event.reason}`);
-            } else {
-                // e.g. server process killed or network down
-                // event.code is usually 1006 in this case
-                console.log('[websocket] Connection died');
-            }
-        };
-
-        socket.onerror = function(error) {
-            console.error(`[websocket/error] ${error.message}`);
-        };
-
-        connect.removeAttribute("disabled");
-        input.removeAttribute("disabled");
-        connect.addEventListener("click", () => {
-            socket.send(JSON.stringify({
-                "from": id,
-                "command": "connect",
-            }));
-            connect.setAttribute("disabled", "disabled");
-            input.setAttribute("disabled", "disabled");
-            connect.innerText = "Conectado!";
+            connect(connections, inputID.value).then(() => {
+                btnConnect.setAttribute("disabled", "disabled");
+                inputID.setAttribute("disabled", "disabled");
+                share.removeAttribute("disabled");
+                btnConnect.innerText = "Online";
+            }).catch(console.error);
         })
+
+        share.addEventListener("click", toggleCameraScreen(localVideo, connections, (stream) => {
+            userStream = stream; // update stream with new source
+            if (localVideo.getAttribute("data-source") === "camera") {
+                share.innerText = "Share Screen";
+            } else {
+                share.innerText = "Use Camera";
+            }
+        }));
     });
 });
+
+function connect(connections, id) {
+    return new Promise(
+        (resolve, reject) => {
+            if (!id) {
+                alert("please, define an username before connect");
+                reject("no username");
+                return
+            }
+
+            const socket = new WebSocket(`wss://${document.location.host}/ws?id=${id}`);
+            socket.onopen = function(e) {
+                console.log("[websocket] Connection established");
+                socket.send(JSON.stringify({
+                    "from": id,
+                    "command": "connect",
+                }));
+                resolve();
+            };
+
+            socket.onmessage = function(event) {
+                const payload = JSON.parse(event.data);
+                console.log(`[websocket] Data received from server: `, payload.command);
+                switch (payload.command) {
+                    case "connect":
+                        const peerConnectionOffer = createPeerConnection(connections, userStream, payload.from)
+                        createOffer(socket, peerConnectionOffer, payload);
+                        break;
+                    case "offer":
+                        const peerConnectionAnswer = createPeerConnection(connections, userStream, payload.from)
+                        createAnswer(socket, peerConnectionAnswer, payload);
+                        break;
+                    case "answer":
+                        if (connections[payload.from]){
+                            connections[payload.from].setRemoteDescription(new RTCSessionDescription(JSON.parse(payload.data)))
+                        }
+                        break;
+                    case "icecandidate":
+                        if (connections[payload.from]){
+                            const candidate = new RTCIceCandidate(JSON.parse(payload.data));
+                            connections[payload.from].addIceCandidate(candidate);
+                        }
+                        break;
+                    case "disconnect":
+                        if (connections[payload.from]){
+                            connections[payload.from] = undefined;
+                        }
+                        const video = document.querySelector(`[data-user="${payload.from}"]`)
+                        if (video) {
+                            video.remove();
+                        }
+                        break;
+                }
+            };
+
+            socket.onclose = function(event) {
+                if (event.wasClean) {
+                    console.log(`[websocket] Connection closed cleanly, code=${event.code} reason=${event.reason}`);
+                } else {
+                    // e.g. server process killed or network down
+                    // event.code is usually 1006 in this case
+                    console.log('[websocket] Connection died');
+                }
+                connect.innerText = "Offline";
+                connect.classList.remove("is-primary");
+            };
+
+            socket.onerror = function(error) {
+                console.error(`[websocket/error] ${error.message}`);
+                reject(error)
+            };
+        }
+    );
+
+}
+
+function toggleCameraScreen(localVideo, connections, callback) {
+    return () => {
+        if (localVideo.getAttribute("data-source") === "camera") {
+
+            // check browser support
+            if (!navigator.mediaDevices || !'getDisplayMedia' in navigator.mediaDevices) {
+                alert("browser not supported")
+                return;
+            }
+
+            navigator.mediaDevices.getDisplayMedia({video: true})
+                .then(stream => replaceVideoStream(connections, localVideo, stream, "screen"))
+                .then(stream => callback(stream));
+
+        } else {
+            navigator.mediaDevices.getUserMedia({audio: true, video: true})
+                .then(stream => replaceVideoStream(connections, localVideo, stream, "camera"))
+                .then(stream => callback(stream));
+        }
+    }
+}
+
+function replaceVideoStream(connections, localVideo, stream, source) {
+    localVideo.srcObject = stream;
+    localVideo.setAttribute("data-source", source);
+    Object.keys(connections).forEach(function(id) {
+        if (!connections[id]) {
+            return
+        }
+
+        connections[id].getSenders().forEach(async sender => {
+            if (sender.track && sender.track.kind === 'video') {
+                const track = stream.getTracks().find(track => track.kind === 'video');
+                console.log("update stream track -> ", id, track)
+                await sender.replaceTrack(track);
+            }
+        });
+    });
+    return stream
+}
 
 function onIceCandidate(socket, from, to) {
     return (event) => {
@@ -102,24 +186,14 @@ function onIceCandidate(socket, from, to) {
     }
 }
 
-function onIceStateChange(pc, event) {
-    if (pc) {
-        console.log(`ICE state: ${pc.iceConnectionState}`);
+function onIceStateChange(peerConnection, event) {
+    if (peerConnection) {
+        console.log(`ICE state: ${peerConnection.iceConnectionState}`);
         console.log('ICE state change event: ', event);
     }
 }
 
-async function start(id) {
-    const localVideo = document.getElementById('localVideo');
-    const labelVideo = document.getElementById('label');
-    const input = document.getElementById('id');
-    localVideo.setAttribute("data-user", id);
-    labelVideo.innerText = id;
-
-    input.addEventListener('keyup', (e) => {
-        labelVideo.innerText = input.value;
-    })
-
+async function initUserMedia(localVideo) {
     const stream = await navigator.mediaDevices.getUserMedia({audio: true, video: true});
     localVideo.srcObject = stream;
 
