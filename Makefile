@@ -12,3 +12,6 @@ sfu: dev-dependencies
 
 p2p: dev-dependencies
 	@wtc p2p
+
+build-p2p:
+	docker build -t rodrigobrito/p2p -f docker/p2p.Dockerfile .

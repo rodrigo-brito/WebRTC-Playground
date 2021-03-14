@@ -3,30 +3,21 @@ package main
 import (
 	_ "embed"
 	"log"
-	"strings"
 
 	"github.com/spf13/viper"
 )
 
-//go:embed .env
-var configFile string
-
 func init() {
+	viper.AutomaticEnv()
+	viper.AddConfigPath(".")
 	viper.SetConfigName(".env")
 	viper.SetConfigType("env")
-	err := viper.ReadConfig(strings.NewReader(configFile))
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	viper.AutomaticEnv()
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			panic(err)
+			log.Fatal(err)
 		}
 	}
-
-	viper.SetDefault("port", 9000)
+	viper.SetDefault("p2p_port", 9000)
 }
 
 func TLSKey() string {
@@ -38,5 +29,5 @@ func TLSCert() string {
 }
 
 func Port() int {
-	return viper.GetInt("port")
+	return viper.GetInt("p2p_port")
 }
