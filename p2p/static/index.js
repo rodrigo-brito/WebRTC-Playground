@@ -114,8 +114,9 @@ function connect(connections, id) {
                     // event.code is usually 1006 in this case
                     console.log('[websocket] Connection died');
                 }
-                connect.innerText = "Offline";
-                connect.classList.remove("is-primary");
+                const btn = document.getElementById("connect");
+                btn.innerText = "Offline";
+                btn.classList.remove("is-primary");
             };
 
             socket.onerror = function(error) {
